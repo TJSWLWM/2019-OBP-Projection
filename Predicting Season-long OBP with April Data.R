@@ -191,10 +191,10 @@ pairs(batting$MarApr_OBP ~  batting$MarApr_O.Swing. + batting$MarApr_Z.Swing. + 
       + batting$MarApr_Z.Contact. + batting$MarApr_Contact., lower.panel=panel.smooth, upper.panel = panel.cor)
 
 
-###Creating two separate dataframes (one with March/April OBP, one with Full-Season OBP). This will allow us to cleanly output results later.
+###Creating two separate dataframes (one without March/April OBP, one without Full-Season OBP). This will allow us to cleanly output results later.
 
-train <- subset(batting, select = -c(FullSeason_OBP) )
-test <- subset(batting, select = -c(MarApr_OBP))
+train <- subset(batting, select = -c(FullSeason_OBP) ) #Getting rid of Full Season OBP to allow MarApr OBP to be OBP in training
+test <- subset(batting, select = -c(MarApr_OBP)) #Getting rid of MarApr OBP to allow full-season OBP to be OBP
 
 names(train)[names(train) == 'MarApr_OBP'] <- 'OBP'
 names(test)[names(test) == 'FullSeason_OBP'] <- 'OBP'
@@ -205,7 +205,7 @@ names(test)[names(test) == 'FullSeason_OBP'] <- 'OBP'
 ########## Creating two models - one linear regression model using stepwise feature selection and one gradient boosted model (GBM).
 ########## Will then compare results and pick best model
 
-##### Model 1: Linear with stepwise feature selection
+##### Model 1: Linear with stepwise feature selection - Adds and subtracts predictors (using both parameter) to discover the appropriate predictors
 
 # Stepwise Approach by Akaike Information Criterion
 fullmodel <- lm(formula = OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R 
@@ -216,7 +216,7 @@ summary(stepwise)
 
 # Set seed for reproducibility
 set.seed(123)
-# Set up repeated k-fold cross-validation
+# Set up repeated k-fold cross-validation, having it resample 10 times
 train.control <- trainControl(method = "cv", number = 10)
 # Train the model
 step.model <- train(OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R 
@@ -225,8 +225,7 @@ step.model <- train(OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R
                     + MarApr_HR.FB + MarApr_O.Swing. + MarApr_Z.Contact. + MarApr_Contact., data = train,
                     method = "leapBackward", 
                     tuneGrid = data.frame(nvmax = 1:16),
-                    trControl = train.control)
-
+                    trControl = train.control)   #Using leapBackward because we are concerned about collinearity and have a relatively small number of predictors.
 step.model$results
 step.model$bestTune
 summary(step.model$finalModel)
@@ -248,6 +247,7 @@ GBModel = gbm(train$OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R
                   + MarApr_HR.FB + MarApr_O.Swing. + MarApr_Z.Contact. + MarApr_Contact., data = train, 
                   distribution = "gaussian", cv.folds = 10, shrinkage = 0.01, n.minobsinnode = 10, n.trees = 4480)
 
+#Number of trees is later hyper-parameter optimized, and that got to 4480
 
 print(GBModel)
 summary(GBModel)
