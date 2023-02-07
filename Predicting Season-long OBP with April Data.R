@@ -239,6 +239,8 @@ test$POBP <- predict(LModel, newdata = test, type = "response")
 
 ######### Model 2: GBM Model
 
+### Creates trees one at a time and adds them together (weak learners) to steadily improve results. 
+
 ## Working with small dataset, need to use cross-fold validation and many trees. 
 #Tree number was initially higher, adjusted down after testing for optimal number below. Variables selected to be complete while avoiding multicollinearity. 
 GBModel = gbm(train$OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R 
