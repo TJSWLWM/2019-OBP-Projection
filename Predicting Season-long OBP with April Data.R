@@ -1,5 +1,4 @@
 ###############Tanner Smith
-############### Question 2
 library(tidyverse)
 library(broom)
 library(readr)
@@ -11,19 +10,23 @@ library(corrplot)
 library(car)
 library(InformationValue)
 library(pbkrtest)
-library(car)
 library(leaps)
 library(MASS)
 library(corrplot)
 library(glm2)
 library(aod)
 library(glmnet)
-
-
+library(caret)
+library(gbm)
+library(jtools)
+library(Rcpp)
+library(stargazer)
 
 batting=read.csv("C:/Users/tanne/OneDrive/Documents/batting.csv",header=T)
 
 
+#General Approach: Create model to predict March/April OBP 
+#and then test to see how well it performs at predicting full season OBP
 
 ############## Part 1: Cleaning and Examining the Data ##########################################################################
 
@@ -66,10 +69,6 @@ str(batting)
 
 ##########Part 1B: Data Visualization and checking for Volume ################
 
-# Full-Season OBP 
-par(mfrow=c(1,2))
-hist(batting$FullSeason_OBP, col = "#A71930", xlab = "Full-Season-OBP", main = "Histogram of Full-Season OBP")
-boxplot(batting$FullSeason_OBP, col = "#A71930", main = "Boxplot of Full-Season OBP")
 par(mfrow = c(1,1))
 # Plate Appearances and At-Bats
 par(mfrow=c(2,2))
@@ -175,141 +174,150 @@ panel.cor <- function(x, y, digits=2, prefix="", cex.cor, ...)
   text(0.5, 0.5, txt, cex = cex.cor * r)
 }
 
-# Box Score Counting Stats and Season OBP
-pairs(~ batting$FullSeason_OBP + batting$MarApr_PA + batting$MarApr_AB + batting$MarApr_H + batting$MarApr_HR + batting$MarApr_R
+# Box Score Counting Stats and March-April OBP
+pairs( batting$MarApr_OBP ~ batting$MarApr_PA + batting$MarApr_AB + batting$MarApr_H + batting$MarApr_HR + batting$MarApr_R
       +batting$MarApr_RBI + batting$MarApr_SB + batting$MarApr_BB.+batting$MarApr_K., lower.panel=panel.smooth, upper.panel = panel.cor)
 
-#Base Ratio Stats and Season OBP
-pairs(~ batting$FullSeason_OBP + batting$MarApr_ISO + batting$MarApr_BABIP + batting$MarApr_AVG + batting$MarApr_OBP + batting$MarApr_SLG, 
+#Base Ratio Stats and March-April OBP
+pairs(batting$MarApr_OBP ~ batting$MarApr_ISO + batting$MarApr_BABIP + batting$MarApr_AVG + batting$MarApr_SLG, 
       lower.panel=panel.smooth, upper.panel = panel.cor)
 
-#Batted Ball Type Stats and Season OBP - Relationships are weaker
-pairs(~ batting$FullSeason_OBP + batting$MarApr_LD. + batting$MarApr_GB. + batting$MarApr_IFFB. + batting$MarApr_HR.FB, 
+#Batted Ball Type Stats and March-April OBP - Relationships are weaker
+pairs(batting$MarApr_OBP ~ batting$MarApr_LD. + batting$MarApr_GB. + batting$MarApr_IFFB. + batting$MarApr_HR.FB, 
       lower.panel=panel.smooth, upper.panel = panel.cor)
 
-#Plate Discipline Stats and Season OBP
-pairs(~ batting$FullSeason_OBP + batting$MarApr_O.Swing. + batting$MarApr_Z.Swing. + batting$MarApr_Swing. + batting$MarApr_O.Contact.
+#Plate Discipline Stats and March-April OBP - Relationships are weaker
+pairs(batting$MarApr_OBP ~  batting$MarApr_O.Swing. + batting$MarApr_Z.Swing. + batting$MarApr_Swing. + batting$MarApr_O.Contact.
       + batting$MarApr_Z.Contact. + batting$MarApr_Contact., lower.panel=panel.smooth, upper.panel = panel.cor)
 
-###################### Part 2 - Feature Selection and Alternative Regression Methods #########################################
 
-####### Ridge Regression#######
+###Creating two separate dataframes (one with March/April OBP, one with Full-Season OBP). This will allow us to cleanly output results later.
 
-y = batting$FullSeason_OBP
-x <- model.matrix(FullSeason_OBP~MarApr_H + MarApr_HR + MarApr_BB. + MarApr_K. + MarApr_ISO + MarApr_OBP + MarApr_HR.FB + MarApr_O.Swing. + MarApr_Z.Contact.,
-                    data=batting)
+train <- subset(batting, select = -c(FullSeason_OBP) )
+test <- subset(batting, select = -c(MarApr_OBP))
+
+names(train)[names(train) == 'MarApr_OBP'] <- 'OBP'
+names(test)[names(test) == 'FullSeason_OBP'] <- 'OBP'
+
+#################### Part 2: Model Creation ############################################
 
 
-grid=10^seq(10,-2,length=100)
-ridge.mod=glmnet(x,y,alpha=0,lambda=grid)
-dim(coef(ridge.mod))
-predict(ridge.mod,s=50,type="coefficients")[1:11,]
-set.seed(1)
-train=sample(1:nrow(x), nrow(x)/2)
-test=(-train)
-y.test=y[test]
+########## Creating two models - one linear regression model using stepwise feature selection and one gradient boosted model (GBM).
+########## Will then compare results and pick best model
 
-ridge.mod=glmnet(x[train,],y[train],alpha=0,lambda=grid, thresh=1e-12)
-ridge.pred=predict(ridge.mod,s=4,newx=x[test,])
-mean((ridge.pred-y.test)^2)
-mean((mean(y[train])-y.test)^2)
+##### Model 1: Linear with stepwise feature selection
 
-ridge.pred=predict(ridge.mod,s=1e10,newx=x[test,])
-mean((ridge.pred-y.test)^2)
+# Stepwise Approach by Akaike Information Criterion
+fullmodel <- lm(formula = OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R 
+                + MarApr_RBI + MarApr_SB + MarApr_K. + MarApr_ISO + MarApr_BABIP + MarApr_FB.+ MarApr_GB. + MarApr_IFFB. 
+                + MarApr_HR.FB + MarApr_O.Swing. + MarApr_Z.Contact. + MarApr_Contact., data = train)
+stepwise <- stepAIC(fullmodel, direction = "both", trace = FALSE)
+summary(stepwise)
 
-ridge.pred=predict(ridge.mod,s=0,newx=x[test,],exact=T,x=x[train,],y=y[train])
-mean((ridge.pred-y.test)^2)
-lm(y~x, subset=train)
-predict(ridge.mod,s=0,exact=T,type="coefficients",x=x[train,],y=y[train])[1:11,]
+# Set seed for reproducibility
+set.seed(123)
+# Set up repeated k-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+step.model <- train(OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R 
+                    + MarApr_RBI + MarApr_SB + MarApr_K. + MarApr_ISO + MarApr_BABIP + MarApr_FB.
+                    + MarApr_GB. + MarApr_IFFB. 
+                    + MarApr_HR.FB + MarApr_O.Swing. + MarApr_Z.Contact. + MarApr_Contact., data = train,
+                    method = "leapBackward", 
+                    tuneGrid = data.frame(nvmax = 1:16),
+                    trControl = train.control)
 
-#find optimal lambda
-set.seed(1)
-cv.out=cv.glmnet(x[train,],y[train],alpha=0)
-plot(cv.out)
-bestlam=cv.out$lambda.min
-bestlam
-#Rerun Ridge Regression with optimal lambda
-ridge.pred=predict(ridge.mod,s=bestlam,newx=x[test,])
-mean((ridge.pred-y.test)^2)
-out=glmnet(x,y,alpha=0)
-RidgeModelCoef = predict(out,type="coefficients",s=bestlam)[1:11,]
+step.model$results
+step.model$bestTune
+summary(step.model$finalModel)
+coef(step.model$finalModel, 8)
 
-####### Lasso ######
-#x and y are the same as in ridge regression
+LModel = lm(OBP ~ MarApr_PA + MarApr_BB. + MarApr_R + MarApr_K. + MarApr_ISO + MarApr_BABIP, 
+   data = train)
+summary(LModel)
 
-lasso.mod=glmnet(x[train,],y[train],alpha=1,lambda=grid)
-plot(lasso.mod)
+test$POBP <- predict(LModel, newdata = test, type = "response")
 
-set.seed(1)
-cv.out=cv.glmnet(x[train,],y[train],alpha=1)
-plot(cv.out)
-bestlam=cv.out$lambda.min
-lasso.pred=predict(lasso.mod,s=bestlam,newx=x[test,])
-mean((lasso.pred-y.test)^2)
+######### Model 2: GBM Model
 
-out=glmnet(x,y,alpha=1,lambda=grid)
-lasso.coef=predict(out,type="coefficients",s=bestlam)[1:11,]
-lasso.coef
-lasso.coef[lasso.coef!=0]
+## Working with small dataset, need to use cross-fold validation and many trees. 
+#Tree number was initially higher, adjusted down after testing for optimal number below. Variables selected to be complete while avoiding multicollinearity. 
+GBModel = gbm(train$OBP ~ MarApr_PA + MarApr_HR + MarApr_BB. + MarApr_R 
+                  + MarApr_RBI + MarApr_SB + MarApr_K. + MarApr_ISO + MarApr_BABIP + MarApr_FB.
+                  + MarApr_GB. + MarApr_IFFB. 
+                  + MarApr_HR.FB + MarApr_O.Swing. + MarApr_Z.Contact. + MarApr_Contact., data = train, 
+                  distribution = "gaussian", cv.folds = 10, shrinkage = 0.01, n.minobsinnode = 10, n.trees = 4480)
 
-#Lasso method sets coefficient of all X variables to 0 except for MarApr_H and MarApr_OBP
 
-####### Bootstrap #########
-library(boot)
-#Statistic of interest - estimate alpha for MarApr_OBP on FullSeason_OBP
-alpha.fn=function(batting,index){
-  X=batting$MarApr_OBP[index]
-  Y=batting$FullSeason_OBP[index]
-  return((var(Y)-cov(X,Y))/(var(X)+var(Y)-2*cov(X,Y)))
-}
-alpha.fn(batting,1:100)
-set.seed(1)
-alpha.fn(batting,sample(100,100,replace=T))
-boot(batting,alpha.fn,R=160)
+print(GBModel)
+summary(GBModel)
 
-#################### Part 3: Model Creation and Performance ############################################
+##Weights BABIP, BB, K, ISO highest
+
+
+#################### Part 3: Model Validation and Result Output ############################################
+
+
+#### Looking at variables with highest relative influences
+plot(GBMModel, i = "MarApr_BABIP")
+plot(GBModel, i = "MarApr_BB.")
+plot(GBModel, i = "MarApr_K.")
+plot(GBModel, i = "MarApr_ISO")
+
+## These appear to have the proper relationships, as BABIP, BBs and ISO have a positive correlation with OBP, while Ks have a negative correlation.
+
+
+##Testing for optimal number of trees
+gbm.perf(GBModel) #Adjust to 4480
+
+test$PROBP <- predict(GBModel, newdata = test, type = "response")
+
+
+######## Performance #######
+
 #Function for calculating Mean Squared Error
 mse <- function(sm) 
   mean(sm$residuals^2)
 
-# Stepwise Approach by Akaike Information Criterion
-stepwisemodel <- lm(formula = FullSeason_OBP ~ MarApr_PA + MarApr_H + MarApr_HR + MarApr_BB. + MarApr_K. + MarApr_ISO + MarApr_OBP + MarApr_O.Swing. + 
-                      MarApr_Z.Contact., data = batting)
-stepwise <- stepAIC(stepwisemodel, direction = "both")
-summary(stepwise)
-
-batting$StepwiseModelPrediction <- predict(stepwise, type = "response")
-
-#Simple Model Based on Lasso
-Simple <- lm(formula = FullSeason_OBP ~ MarApr_OBP + MarApr_H, data = batting)
-summary(Simple)
-
-batting$SimpleModelPrediction <- predict(Simple, type = "response")
+mse(LModel)
+mean((test$PROBP-test$OBP)^2) #MSE for GBM
 
 
-######## Performance #######
-mse(stepwise)
-mse(Simple)
-vif(stepwise)
-vif(Simple)
+### Testing for multicollinearity in model
+vif(LModel) #ISO and HR/FB have moderately high levels of multicollinearity, which makes sense. 
+### Best way to handle this is to try the model without HR/FB, which was found to be less important by GBM model and in baseball circles
+### is considered less skill-based. In doing this, FB rate becomes statistically insignificant, leading to the new model below. 
+### R^2 and Adjusted R^2 are reduced by less than 0.01
 
 
-#Evaluate results for Stepwise Model Prediction
-summary(batting$StepwiseModelPrediction)
-hist(batting$StepwiseModelPrediction)
-boxplot(batting$StepwiseModelPrediction, col = "#A71930", main = "Boxplot of Predicted OBP")
+LModel = lm(OBP ~ MarApr_PA + MarApr_BB. + MarApr_R + MarApr_K. + MarApr_ISO + MarApr_BABIP, 
+            data = train)
+summary(LModel)
+
+LModelHRFB = LModel = lm(OBP ~ MarApr_PA + MarApr_BB. + MarApr_R + MarApr_K. + MarApr_ISO + MarApr_BABIP + MarApr_HR.FB + MarApr_FB., 
+                         data = train)
+summary(LModelHRFB)
+
+### Also wanted to test by AIC by creating separate model with HR/FB and FB rate included. 
+### AIC is slightly better for model with HR/FB and FB rate, which makes sense why the stepwise model included them, 
+### but not to such a large degree to change my decision
+AIC(LModel)
+AIC(LModelHRFB)
 
 
-
-#Evaluate results for Simple Model Prediction
-summary(batting$SimpleModelPrediction)
-hist(batting$SimpleModelPrediction)
-boxplot(batting$SimpleModelPrediction, col = "#A71930", main = "Boxplot of Predicted OBP")
+### Now we should re-test the mse of the respective models to make sure the linear model is still outperforming the GBM without the multicollinearity. 
+mse(LModel)
+mean((test$PROBP-test$OBP)^2) #MSE for GBM
 
 
-#Chosen Model - Stepwise Model
-prediction <- batting[c("playerid", "Name", "Team", "StepwiseModelPrediction")]
+#### Output Results for Champion Linear model
 
+prediction <- test[c('Name', 'OBP', 'POBP')]
+#Writing CSV file with predictions
+write.csv(prediction, file = "LinearOBPresults.csv")
 
-#Prediction File 
-write.csv(prediction, file = "Q2Prediction.csv")
+##Outputting predictions for GBM model
+
+prediction <- test[c('Name', 'OBP', 'PROBP')]
+#Writing CSV file with predictions
+write.csv(prediction, file = "GBMOBPresults.csv")
