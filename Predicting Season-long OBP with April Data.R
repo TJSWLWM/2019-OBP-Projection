@@ -1,10 +1,10 @@
-###############Tanner Smith
+############### Tanner Smith
 library(tidyverse)
 library(broom)
 library(readr)
 library(dplyr)
 library(zoo)
-library(psych)
+library(psych) 
 library(ROCR)
 library(corrplot)
 library(car)
@@ -26,7 +26,7 @@ batting=read.csv("C:/Users/tanne/OneDrive/Documents/batting.csv",header=T)
 
 
 #General Approach: Create model to predict March/April OBP 
-#and then test to see how well it performs at predicting full season OBP
+#and then test to see how well it performs at predicting full season OBP (on base percentage, percentage of plate appearences reaching base)
 
 ############## Part 1: Cleaning and Examining the Data ##########################################################################
 
